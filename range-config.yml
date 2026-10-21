@@ -1,0 +1,78 @@
+# yaml-language-server: $schema=https://docs.ludus.cloud/schemas/range-config.json
+
+ludus:
+  - vm_name: "{{ range_id }}-victim"
+    hostname: "{{ range_id }}-victim"
+    template: win11-22h2-x64-enterprise-template
+    vlan: 10
+    ip_last_octet: 10
+    ram_gb: 4
+    cpus: 2
+    windows:
+      sysprep: false
+
+  - vm_name: "{{ range_id }}-emudhra"
+    hostname: "{{ range_id }}-emudhra"
+    template: debian-13-x64-server-template
+    vlan: 20
+    ip_last_octet: 10
+    ram_gb: 4
+    cpus: 2
+    linux: true
+    dns_rewrites:
+      - google.com
+      - microsoft.com
+      - github.com
+      - emudhra.fail
+    roles:
+      - badsectorlabs.ludus_emudhra_lab_server
+
+router:
+  vm_name: '{{ range_id }}-router-debian13-x64'
+  hostname: '{{ range_id }}-router-debian13-x64'
+  template: debian-13-x64-server-template
+  ram_gb: 2
+  cpus: 2
+  ram_min_gb: 0.5
+  # We need these to make sure Windows doesn't update itself right after being cloned
+  iptables_commands:
+    - >-
+      iptables -I LUDUS_DEFAULTS 1
+      -s 10.{{ range_second_octet }}.10.0/24
+      -d 198.51.100.0/24
+      -m comment --comment "Allow victim VLAN replies to WireGuard clients"
+      -j ACCEPT
+    - >-
+      iptables -I LUDUS_DEFAULTS 2
+      -s 10.{{ range_second_octet }}.10.0/24
+      -d 192.0.2.0/24
+      -m comment --comment "Allow victim VLAN replies to Ludus control plane"
+      -j ACCEPT
+    - >-
+      iptables -I LUDUS_DEFAULTS 3
+      -s 10.{{ range_second_octet }}.10.0/24
+      ! -d 10.{{ range_second_octet }}.0.0/16
+      -m comment --comment "Block victim VLAN internet access"
+      -j REJECT
+
+network:
+  inter_vlan_default: REJECT
+  external_default: ACCEPT
+  wireguard_vlan_default: ACCEPT
+  rules:
+    - name: Allow victim web access to spoof server
+      vlan_src: 10
+      ip_last_octet_src: 10
+      vlan_dst: 20
+      ip_last_octet_dst: 10
+      protocol: tcp
+      ports: 80,443
+      action: ACCEPT
+    - name: Allow victim diagnostics to spoof server
+      vlan_src: 10
+      ip_last_octet_src: 10
+      vlan_dst: 20
+      ip_last_octet_dst: 10
+      protocol: icmp
+      ports: all
+      action: ACCEPT

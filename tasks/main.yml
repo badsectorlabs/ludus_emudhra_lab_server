@@ -1,0 +1,159 @@
+---
+- name: Install eMudhra lab runtime packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - nginx
+      - osslsigncode
+      - sudo
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create eMudhra lab service group
+  ansible.builtin.group:
+    name: "{{ emudhra_lab_group }}"
+    system: true
+    state: present
+
+- name: Create eMudhra lab service user
+  ansible.builtin.user:
+    name: "{{ emudhra_lab_user }}"
+    group: "{{ emudhra_lab_group }}"
+    home: "{{ emudhra_lab_data_dir }}"
+    shell: /usr/sbin/nologin
+    create_home: false
+    system: true
+    state: present
+
+- name: Create eMudhra lab directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - path: "{{ emudhra_lab_install_dir }}"
+      owner: root
+      group: root
+      mode: "0755"
+    - path: "{{ emudhra_lab_install_dir }}/ca"
+      owner: "{{ emudhra_lab_user }}"
+      group: "{{ emudhra_lab_group }}"
+      mode: "0700"
+    - path: "{{ emudhra_lab_install_dir }}/assets"
+      owner: root
+      group: root
+      mode: "0755"
+    - path: "{{ emudhra_lab_data_dir }}"
+      owner: "{{ emudhra_lab_user }}"
+      group: "{{ emudhra_lab_group }}"
+      mode: "0750"
+
+- name: Install eMudhra lab server binary
+  ansible.builtin.copy:
+    src: emudhra-lab-server
+    dest: "{{ emudhra_lab_install_dir }}/emudhra-lab-server"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart eMudhra lab server
+
+- name: Install compromised CA certificates and keys
+  ansible.builtin.copy:
+    src: ca/
+    dest: "{{ emudhra_lab_install_dir }}/ca/"
+    owner: "{{ emudhra_lab_user }}"
+    group: "{{ emudhra_lab_group }}"
+    mode: "0600"
+  no_log: true
+  notify: Restart eMudhra lab server
+
+- name: Install lab static assets
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ emudhra_lab_install_dir }}/assets/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - pwned.png
+    - msgbox.c
+    - msgbox.exe
+  notify: Restart eMudhra lab server
+
+- name: Permit only the fixed nginx reload command
+  ansible.builtin.copy:
+    content: "{{ emudhra_lab_user }} ALL=(root) NOPASSWD: /usr/bin/systemctl reload nginx\n"
+    dest: /etc/sudoers.d/emudhra-lab-nginx
+    owner: root
+    group: root
+    mode: "0440"
+    validate: /usr/sbin/visudo -cf %s
+
+- name: Generate the bootstrap HTTPS certificate
+  ansible.builtin.command:
+    argv:
+      - "{{ emudhra_lab_install_dir }}/emudhra-lab-server"
+      - --bootstrap
+      - --base-dir
+      - "{{ emudhra_lab_data_dir }}"
+      - --ca-dir
+      - "{{ emudhra_lab_install_dir }}/ca"
+      - --assets-dir
+      - "{{ emudhra_lab_install_dir }}/assets"
+    creates: "{{ emudhra_lab_data_dir }}/certs/.bootstrap/fullchain.pem"
+- name: Give the service account ownership of mutable lab data
+  ansible.builtin.file:
+    path: "{{ emudhra_lab_data_dir }}"
+    state: directory
+    owner: "{{ emudhra_lab_user }}"
+    group: "{{ emudhra_lab_group }}"
+    mode: "0750"
+    recurse: true
+
+- name: Install nginx virtual hosts
+  ansible.builtin.template:
+    src: nginx-emudhra-lab.conf.j2
+    dest: /etc/nginx/sites-available/emudhra-lab
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Enable nginx virtual hosts
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/emudhra-lab
+    dest: /etc/nginx/sites-enabled/emudhra-lab
+    state: link
+  notify: Reload nginx
+
+- name: Disable the default nginx virtual host
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
+
+- name: Install eMudhra lab systemd service
+  ansible.builtin.template:
+    src: emudhra-lab.service.j2
+    dest: /etc/systemd/system/emudhra-lab.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart eMudhra lab server
+
+- name: Validate nginx configuration
+  ansible.builtin.command: /usr/sbin/nginx -t
+  changed_when: false
+
+- name: Enable and start eMudhra lab services
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop:
+    - emudhra-lab
+    - nginx
