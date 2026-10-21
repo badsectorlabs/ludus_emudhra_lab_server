@@ -26,10 +26,10 @@ jobs:
         with:
           path: 'ludus_ansible_role'
 
-      - name: Set up Python 3.
-        uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
         with:
-          python-version: '3.x'
+          python-version: '3.13'
 
       - name: Install Ansible.
         run: pip3 install ansible-core
