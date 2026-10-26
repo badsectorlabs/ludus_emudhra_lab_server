@@ -1,6 +1,6 @@
 ---
 galaxy_info:
-  role_name: emudhra_lab_server
+  role_name: ludus_emudhra_lab_server
   author: eMudhra compromise lab
   description: Host the eMudhra compromised CA demonstration dashboard and spoof sites.
   license: MIT
